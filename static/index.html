@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>高数智能错题本</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">∫</span>
+        <div>
+          <strong>高数智能错题本</strong>
+          <small>题库整理 · 错因分析 · 每日练习</small>
+        </div>
+      </div>
+      <nav>
+        <button class="nav-btn active" data-view="dashboard">总览</button>
+        <button class="nav-btn" data-view="library">题库</button>
+        <button class="nav-btn" data-view="mistakes">错题</button>
+        <button class="nav-btn" data-view="daily">每日练习</button>
+      </nav>
+      <form id="uploadForm" class="upload">
+        <label for="pdfFile">上传做题本 PDF</label>
+        <input id="pdfFile" name="file" type="file" accept="application/pdf" />
+        <button type="submit">导入题目</button>
+        <p id="uploadStatus"></p>
+      </form>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <h1 id="viewTitle">学习总览</h1>
+          <p id="viewSubtitle">把 PDF 做题本拆成题库，再围绕错题安排复习。</p>
+        </div>
+        <div class="search">
+          <input id="searchInput" type="search" placeholder="搜索题目文字、标签或备注" />
+        </div>
+      </header>
+
+      <section id="dashboard" class="view active">
+        <div class="metrics">
+          <div class="metric"><span>题目总数</span><strong id="totalCount">0</strong></div>
+          <div class="metric"><span>错题数量</span><strong id="wrongCount">0</strong></div>
+          <div class="metric"><span>需复习</span><strong id="reviewCount">0</strong></div>
+          <div class="metric"><span>薄弱知识点</span><strong id="weakCategory">暂无</strong></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>知识点分布</h2></div>
+          <div id="statsList" class="stats-list"></div>
+        </div>
+      </section>
+
+      <section id="library" class="view">
+        <div class="toolbar">
+          <select id="categoryFilter"></select>
+          <select id="statusFilter">
+            <option value="">全部状态</option>
+            <option>未做</option>
+            <option>做对</option>
+            <option>做错</option>
+            <option>半会</option>
+            <option>需复习</option>
+          </select>
+        </div>
+        <div id="questionGrid" class="question-grid"></div>
+      </section>
+
+      <section id="mistakes" class="view">
+        <div class="toolbar">
+          <button class="ghost" id="focusWrong">只看做错</button>
+          <button class="ghost" id="focusReview">只看需复习</button>
+        </div>
+        <div id="mistakeGrid" class="question-grid"></div>
+      </section>
+
+      <section id="daily" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>今日练习</h2>
+              <p id="dailyMessage"></p>
+            </div>
+            <button id="refreshDaily">刷新</button>
+          </div>
+          <div id="dailyGrid" class="question-grid"></div>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="detailDialog"><article id="detailContent"></article></dialog>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
