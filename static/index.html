@@ -3,26 +3,36 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>高数智能错题本</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <title>Sakura做题集</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260506-cascade-filters" />
   </head>
   <body>
     <aside class="sidebar">
       <div class="brand">
         <span class="brand-mark">∫</span>
         <div>
-          <strong>高数智能错题本</strong>
-          <small>题库整理 · 错因分析 · 每日练习</small>
+          <strong>Sakura做题集</strong>
+          <small>分册管理 · 错因分析 · 每日练习</small>
         </div>
       </div>
       <nav>
         <button class="nav-btn active" data-view="dashboard">总览</button>
+        <button class="nav-btn" data-view="documents">做题本</button>
+        <button class="nav-btn" data-view="chapterStats">章节统计</button>
         <button class="nav-btn" data-view="library">题库</button>
         <button class="nav-btn" data-view="mistakes">错题</button>
+        <button class="nav-btn" data-view="reflection">总结反思</button>
         <button class="nav-btn" data-view="daily">每日练习</button>
       </nav>
       <form id="uploadForm" class="upload">
         <label for="pdfFile">上传做题本 PDF</label>
+        <input id="bookTitle" name="title" type="text" placeholder="做题本名称，可不填" />
+        <input id="subjectInput" name="subject" type="text" list="subjectSuggestions" placeholder="科目：可自定义" />
+        <datalist id="subjectSuggestions"></datalist>
+        <div class="page-range">
+          <input id="startPageInput" name="start_page" type="number" min="1" placeholder="起始页" />
+          <input id="endPageInput" name="end_page" type="number" min="1" placeholder="结束页" />
+        </div>
         <input id="pdfFile" name="file" type="file" accept="application/pdf" />
         <button type="submit">导入题目</button>
         <p id="uploadStatus"></p>
@@ -33,7 +43,7 @@
       <header class="topbar">
         <div>
           <h1 id="viewTitle">学习总览</h1>
-          <p id="viewSubtitle">把 PDF 做题本拆成题库，再围绕错题安排复习。</p>
+          <p id="viewSubtitle">把不同课程的做题本拆成题库，再围绕错题安排复习。</p>
         </div>
         <div class="search">
           <input id="searchInput" type="search" placeholder="搜索题目文字、标签或备注" />
@@ -41,21 +51,79 @@
       </header>
 
       <section id="dashboard" class="view active">
+        <div class="panel dashboard-filter-panel">
+          <div class="panel-head">
+            <div>
+              <h2>统计范围</h2>
+              <p>先选科目，再选做题本，只展示对应知识点分布。</p>
+            </div>
+            <div class="toolbar compact">
+              <select id="dashboardSubjectFilter">
+                <option value="">全部科目</option>
+              </select>
+              <select id="dashboardDocumentFilter">
+                <option value="">全部做题本</option>
+              </select>
+            </div>
+          </div>
+        </div>
         <div class="metrics">
-          <div class="metric"><span>题目总数</span><strong id="totalCount">0</strong></div>
-          <div class="metric"><span>错题数量</span><strong id="wrongCount">0</strong></div>
-          <div class="metric"><span>需复习</span><strong id="reviewCount">0</strong></div>
-          <div class="metric"><span>薄弱知识点</span><strong id="weakCategory">暂无</strong></div>
+          <div class="metric">
+            <span>题目总数</span>
+            <strong id="totalCount">0</strong>
+          </div>
+          <div class="metric">
+            <span>错题数量</span>
+            <strong id="wrongCount">0</strong>
+          </div>
+          <div class="metric">
+            <span>需复习</span>
+            <strong id="reviewCount">0</strong>
+          </div>
+          <div class="metric">
+            <span>薄弱知识点</span>
+            <strong id="weakCategory">暂无</strong>
+          </div>
+        </div>
+        <div class="panel subject-panel">
+          <div class="panel-head">
+            <h2>科目分布</h2>
+          </div>
+          <div id="subjectStatsList" class="stats-list"></div>
         </div>
         <div class="panel">
-          <div class="panel-head"><h2>知识点分布</h2></div>
+          <div class="panel-head">
+            <h2>知识点分布</h2>
+          </div>
           <div id="statsList" class="stats-list"></div>
+        </div>
+      </section>
+
+      <section id="documents" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>做题本</h2>
+              <p>每套 PDF 独立管理，也会汇总到总题库。</p>
+            </div>
+            <button id="showAllQuestions">查看总题库</button>
+          </div>
+          <div id="documentGrid" class="document-grid"></div>
         </div>
       </section>
 
       <section id="library" class="view">
         <div class="toolbar">
+          <select id="documentFilter">
+            <option value="">全部做题本</option>
+          </select>
+          <select id="subjectFilter">
+            <option value="">全部科目</option>
+          </select>
           <select id="categoryFilter"></select>
+          <select id="chapterFilter">
+            <option value="">全部章节</option>
+          </select>
           <select id="statusFilter">
             <option value="">全部状态</option>
             <option>未做</option>
@@ -66,6 +134,19 @@
           </select>
         </div>
         <div id="questionGrid" class="question-grid"></div>
+      </section>
+
+      <section id="chapterStats" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>章节正确率</h2>
+              <p>选择一套做题本，查看各章节做对、做错和待复习情况。</p>
+            </div>
+            <select id="statsDocumentSelect"></select>
+          </div>
+          <div id="chapterStatsGrid" class="chapter-stats-grid"></div>
+        </div>
       </section>
 
       <section id="mistakes" class="view">
@@ -88,9 +169,33 @@
           <div id="dailyGrid" class="question-grid"></div>
         </div>
       </section>
+
+      <section id="reflection" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>总结与反思</h2>
+              <p>按周或月复盘学习内容、错题不足和后续规划。</p>
+            </div>
+            <div class="toolbar compact">
+              <select id="reflectionPeriod">
+                <option value="week">本周</option>
+                <option value="month">本月</option>
+              </select>
+              <button id="generateReflection">生成反思</button>
+            </div>
+          </div>
+          <div id="reflectionSummary" class="reflection-summary"></div>
+          <div id="reflectionSubjectSummary" class="reflection-subject-summary"></div>
+          <pre id="reflectionOutput" class="reflection-output">选择周期后点击生成。</pre>
+        </div>
+      </section>
     </main>
 
-    <dialog id="detailDialog"><article id="detailContent"></article></dialog>
-    <script src="/static/app.js"></script>
+    <dialog id="detailDialog">
+      <article id="detailContent"></article>
+    </dialog>
+
+    <script src="/static/app.js?v=20260506-reflection-subjects"></script>
   </body>
 </html>
