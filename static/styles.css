@@ -501,6 +501,40 @@ textarea:focus,
   color: #30230b;
 }
 
+.memory {
+  background: #edf4fb;
+  color: var(--blue);
+}
+
+.memory.mastered {
+  background: #eef4e6;
+  color: var(--accent-dark);
+}
+
+.foundation {
+  background: #fff4d8;
+  color: #6e4a00;
+}
+
+.memory-panel {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.memory-panel strong {
+  color: var(--ink);
+}
+
+.memory-panel small {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .snippet {
   min-height: 42px;
   color: var(--ink);
@@ -551,9 +585,36 @@ dialog::backdrop {
   padding: 18px;
 }
 
-.detail-image img {
+.crop-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.crop-stage {
+  position: relative;
+  width: 100%;
+  user-select: none;
+}
+
+.detail-image img,
+.crop-stage img {
   width: 100%;
   display: block;
+}
+
+.crop-box {
+  position: absolute;
+  border: 2px solid var(--danger);
+  background: rgba(181, 74, 56, 0.12);
+  pointer-events: none;
+}
+
+.hidden {
+  display: none;
 }
 
 .detail-side {
@@ -570,13 +631,70 @@ dialog::backdrop {
 }
 
 .detail-side pre,
-.reflection-output {
+.reflection-output,
+.math-output {
   white-space: pre-wrap;
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 14px;
   line-height: 1.65;
+}
+
+.meta-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.meta-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  font-weight: 700;
+}
+
+.meta-check input {
+  width: 16px;
+  height: 16px;
+}
+
+.radar-card {
+  align-content: start;
+}
+
+.radar {
+  width: 100%;
+  max-width: 280px;
+  margin: 0 auto;
+  overflow: visible;
+}
+
+.radar-grid {
+  fill: #f5f8f2;
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.radar-axis {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.radar-area {
+  fill: rgba(181, 74, 56, 0.24);
+  stroke: var(--danger);
+  stroke-width: 2;
+}
+
+.radar text {
+  font-size: 11px;
+  fill: var(--muted);
 }
 
 .reflection-summary {

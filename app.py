@@ -9,7 +9,7 @@ import sys
 import traceback
 import uuid
 import warnings
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,6 +33,18 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEFAULT_SUBJECT = "未分类"
 DEFAULT_CATEGORY = "待归类"
 DEFAULT_CHAPTER = "未识别章节"
+REVIEW_INTERVAL_DAYS = [1, 3, 7, 14, 30]
+META_TAGS = ["计算失误", "公式遗忘", "逻辑死角", "题意理解偏差"]
+WRONGISH_STATUSES = {"做错", "半会", "需复习"}
+KNOWLEDGE_DEPENDENCIES = {
+    "微分方程": ["不定积分", "导数与微分"],
+    "重积分": ["定积分及其应用", "不定积分"],
+    "多元函数微分学": ["导数与微分", "函数、极限与连续"],
+    "无穷级数": ["函数、极限与连续", "导数与微分"],
+    "导数应用": ["导数与微分", "函数、极限与连续"],
+    "定积分及其应用": ["不定积分", "函数、极限与连续"],
+    "概率统计": ["函数、极限与连续"],
+}
 
 KEYWORD_RULES = [
     ("无穷级数", ["级数", "收敛", "发散", "收敛半径", "幂级数", "泰勒", "麦克劳林", "傅里叶", "sum", "∑"]),
@@ -95,8 +107,15 @@ def init_db() -> None:
                 user_note TEXT NOT NULL DEFAULT '',
                 ai_analysis TEXT NOT NULL DEFAULT '',
                 ai_variations TEXT NOT NULL DEFAULT '',
+                ai_hint TEXT NOT NULL DEFAULT '',
+                meta_tags TEXT NOT NULL DEFAULT '[]',
                 review_count INTEGER NOT NULL DEFAULT 0,
                 last_reviewed_at TEXT,
+                ever_wrong INTEGER NOT NULL DEFAULT 0,
+                review_stage INTEGER NOT NULL DEFAULT 0,
+                retention_stage INTEGER NOT NULL DEFAULT 0,
+                next_review_at TEXT,
+                mastered_at TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(document_id) REFERENCES documents(id)
             );
@@ -110,6 +129,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_questions_chapter ON questions(chapter);
             CREATE INDEX IF NOT EXISTS idx_questions_status ON questions(status);
             CREATE INDEX IF NOT EXISTS idx_questions_document ON questions(document_id);
+            CREATE INDEX IF NOT EXISTS idx_questions_next_review ON questions(next_review_at);
             """
         )
 
@@ -128,7 +148,23 @@ def migrate_db(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE questions ADD COLUMN chapter TEXT NOT NULL DEFAULT '未识别章节'")
     if "ai_variations" not in question_columns:
         conn.execute("ALTER TABLE questions ADD COLUMN ai_variations TEXT NOT NULL DEFAULT ''")
+    if "ai_hint" not in question_columns:
+        conn.execute("ALTER TABLE questions ADD COLUMN ai_hint TEXT NOT NULL DEFAULT ''")
+    if "meta_tags" not in question_columns:
+        conn.execute("ALTER TABLE questions ADD COLUMN meta_tags TEXT NOT NULL DEFAULT '[]'")
+    if "ever_wrong" not in question_columns:
+        conn.execute("ALTER TABLE questions ADD COLUMN ever_wrong INTEGER NOT NULL DEFAULT 0")
+        conn.execute("UPDATE questions SET ever_wrong = 1 WHERE status IN ('做错', '半会', '需复习')")
+    if "review_stage" not in question_columns:
+        conn.execute("ALTER TABLE questions ADD COLUMN review_stage INTEGER NOT NULL DEFAULT 0")
+    if "retention_stage" not in question_columns:
+        conn.execute("ALTER TABLE questions ADD COLUMN retention_stage INTEGER NOT NULL DEFAULT 0")
+    if "next_review_at" not in question_columns:
+        conn.execute("ALTER TABLE questions ADD COLUMN next_review_at TEXT")
+    if "mastered_at" not in question_columns:
+        conn.execute("ALTER TABLE questions ADD COLUMN mastered_at TEXT")
     conn.execute("UPDATE questions SET chapter = ? WHERE chapter = ''", (DEFAULT_CHAPTER,))
+    conn.execute("UPDATE questions SET meta_tags = '[]' WHERE meta_tags = ''")
 
 
 def to_public_path(path: str | Path) -> str:
@@ -139,11 +175,52 @@ def to_public_path(path: str | Path) -> str:
 def row_to_dict(row: sqlite3.Row) -> dict:
     item = dict(row)
     item["image_url"] = to_public_path(item["image_path"])
+    try:
+        item["meta_tags"] = json.loads(item.get("meta_tags") or "[]")
+    except (TypeError, json.JSONDecodeError):
+        item["meta_tags"] = []
     return item
 
 
 def document_to_dict(row: sqlite3.Row) -> dict:
     return dict(row)
+
+
+def schedule_for_status(current: sqlite3.Row | dict | None, status: str, now: datetime | None = None) -> dict:
+    now = now or datetime.now()
+    if status in WRONGISH_STATUSES:
+        return {
+            "ever_wrong": 1,
+            "review_stage": 0,
+            "retention_stage": 1,
+            "next_review_at": (now + timedelta(days=1)).date().isoformat(),
+            "mastered_at": None,
+        }
+    if status != "做对" or not current:
+        return {}
+
+    current_dict = dict(current)
+    was_in_review = bool(current_dict.get("ever_wrong")) or current_dict.get("status") in {"做错", "半会", "需复习"}
+    if not was_in_review:
+        return {}
+
+    next_stage = int(current_dict.get("review_stage") or 0) + 1
+    if next_stage > len(REVIEW_INTERVAL_DAYS):
+        return {
+            "ever_wrong": 1,
+            "review_stage": next_stage,
+            "retention_stage": REVIEW_INTERVAL_DAYS[-1],
+            "next_review_at": None,
+            "mastered_at": now.isoformat(timespec="seconds"),
+        }
+    interval = REVIEW_INTERVAL_DAYS[next_stage - 1]
+    return {
+        "ever_wrong": 1,
+        "review_stage": next_stage,
+        "retention_stage": interval,
+        "next_review_at": (now + timedelta(days=interval)).date().isoformat(),
+        "mastered_at": None,
+    }
 
 
 def get_filter_options(conn: sqlite3.Connection) -> dict:
@@ -469,12 +546,93 @@ def analyze_with_ai(question: dict) -> str:
         return fallback
 
 
+def infer_concept_hint(question: dict) -> str:
+    text = f"{question.get('category', '')} {question.get('chapter', '')} {question.get('ocr_text', '')}".lower()
+    rules = [
+        (["洛必达", "l'h", "lhopital", "0/0", "∞/∞"], "核心定理：洛必达法则。先确认是否满足 0/0 或 ∞/∞ 型，再分别求分子分母导数。"),
+        (["等价", "无穷小", "lim", "极限"], "核心定理：等价无穷小替换与极限四则运算。先判断主导项，再化简为标准极限。"),
+        (["泰勒", "麦克劳林"], "核心定理：泰勒展开。优先围绕展开点保留到第一个非零项或题目所需阶数。"),
+        (["级数", "收敛", "发散"], "核心定理：级数收敛判别法。先判断是正项级数、交错级数、幂级数还是一般项级数。"),
+        (["积分", "原函数", "不定积分"], "核心方法：换元积分或分部积分。先观察复合函数结构与可微因子。"),
+        (["微分方程", "通解", "特解"], "核心方法：一阶方程分类。先判断可分离、齐次、线性，或是否需要积分因子。"),
+        (["导数", "微分", "求导"], "核心定理：复合函数求导法则。先拆外层函数与内层函数。"),
+        (["矩阵", "行列式", "特征值"], "核心定理：矩阵初等变换与特征方程。先明确目标是化简、求秩还是求特征值。"),
+    ]
+    for keywords, hint in rules:
+        if any(keyword in text for keyword in keywords):
+            return hint
+    return f"核心概念：{question.get('category') or DEFAULT_CATEGORY}。先回到该知识点的定义、适用条件和标准题型。"
+
+
+def infer_key_step_hint(question: dict) -> str:
+    text = f"{question.get('category', '')} {question.get('chapter', '')} {question.get('ocr_text', '')}".lower()
+    if "洛必达" in text or "0/0" in text or "∞/∞" in text:
+        return "关键第一步：把原式整理成分式极限，并验证分子、分母同时趋于 0 或同时趋于无穷，再考虑求导。"
+    if "泰勒" in text or "麦克劳林" in text:
+        return "关键第一步：选定展开点，写出常用展开式，例如 e^x、sin x、ln(1+x)，并判断需要保留到几阶。"
+    if "级数" in text:
+        return "关键第一步：先写出通项 a_n，判断是否满足 a_n -> 0；若不满足，可直接判定发散。"
+    if "积分" in text:
+        return "关键第一步：寻找一个可设为 u 的内层表达式，检查 du 是否能在积分式中配出来。"
+    if "微分方程" in text:
+        return "关键第一步：把方程整理成 y' = f(x, y) 或标准线性形式 y' + P(x)y = Q(x)。"
+    if "导数" in text or "微分" in text:
+        return "关键第一步：先标出外层函数，再对内层整体求导，避免漏乘链式法则中的内导数。"
+    return "关键第一步：先把已知条件、要求目标和可用公式分三行写出来，再选择最直接的变形入口。"
+
+
+def generate_hint_with_ai(question: dict, level: int) -> str:
+    if level == 1:
+        return infer_concept_hint(question)
+    if level == 2:
+        return infer_key_step_hint(question)
+
+    fallback = (
+        "Level 3 完整解析：\n"
+        f"1. 先识别知识点：{question.get('category', DEFAULT_CATEGORY)}。\n"
+        "2. 写出题目所需的核心公式。\n"
+        "3. 按公式代入并逐步化简。\n\n"
+        "当前未配置 DEEPSEEK_API_KEY，因此返回本地简版解析。"
+    )
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        return fallback
+    try:
+        from openai import OpenAI
+
+        prompt = f"""
+你是严谨的数学助教。请为下面题目生成 Level 3 Full Solution。
+要求：
+- 使用 Markdown + LaTeX。
+- 公式用 $$...$$ 或 \\(...\\)。
+- 先列关键定理，再给完整步骤，最后给易错点。
+- 不要省略关键代数变形。
+
+科目：{question.get('subject', DEFAULT_SUBJECT)}
+章节：{question.get('chapter', DEFAULT_CHAPTER)}
+知识点：{question.get('category', DEFAULT_CATEGORY)}
+元认知错因：{', '.join(question.get('meta_tags') or []) or question.get('mistake_reason') or '未填写'}
+题目文字：
+{question.get('ocr_text', '')[:4000]}
+"""
+        client = OpenAI(api_key=os.getenv("DEEPSEEK_API_KEY"), base_url=DEEPSEEK_BASE_URL)
+        result = client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.25,
+        )
+        return result.choices[0].message.content or fallback
+    except Exception:
+        print("DeepSeek hint failed; falling back", file=sys.stderr)
+        traceback.print_exc()
+        return fallback
+
+
 def generate_variations_with_ai(question: dict) -> str:
     fallback = (
-        "举一反三练习：\n"
-        f"1. 找一道同属「{question.get('chapter', DEFAULT_CHAPTER)}」的基础题，先练核心定义。\n"
-        f"2. 找一道同知识点「{question.get('category', DEFAULT_CATEGORY)}」的变式题，改变已知条件再做。\n"
-        "3. 做完后对照原题，总结这类题的第一步切入方法。"
+        "难度梯度变式：\n"
+        f"Base：同属「{question.get('category', DEFAULT_CATEGORY)}」，只换数字，不换核心逻辑。\n"
+        "Advanced：改变求解目标，例如由求导改为求原函数、由判定改为求参数范围。\n"
+        "Pro：跨章节综合，把本题知识点与前置概念组合训练。"
     )
     if not os.getenv("DEEPSEEK_API_KEY"):
         return fallback + "\n\n当前未配置 DEEPSEEK_API_KEY，因此使用本地简版举一反三。"
@@ -482,19 +640,21 @@ def generate_variations_with_ai(question: dict) -> str:
         from openai import OpenAI
 
         prompt = f"""
-你是学习训练教练。请根据错题生成“举一反三”练习，不要给很长答案。
+你是学习训练教练。请根据错题生成“难度梯度变式”，使用 Markdown + LaTeX。
 科目：{question.get('subject', DEFAULT_SUBJECT)}
 章节：{question.get('chapter', DEFAULT_CHAPTER)}
 知识点：{question.get('category', DEFAULT_CATEGORY)} / {question.get('subcategory', '')}
-错因：{question.get('mistake_reason') or '未填写'}
+错因：{', '.join(question.get('meta_tags') or []) or question.get('mistake_reason') or '未填写'}
 备注：{question.get('user_note') or '无'}
 原题文字：
 {question.get('ocr_text', '')[:3500]}
 
 请输出：
 1. 题型迁移规律
-2. 3 道变式练习题，只给题目
-3. 每道题训练目标
+2. Base：换数不换逻辑，只给 1 道题
+3. Advanced：变换求解目标，只给 1 道题
+4. Pro：跨章节综合，只给 1 道题
+5. 每道题的训练目标，不给完整答案
 """
         client = OpenAI(api_key=os.getenv("DEEPSEEK_API_KEY"), base_url=DEEPSEEK_BASE_URL)
         result = client.chat.completions.create(
@@ -636,6 +796,89 @@ def generate_reflection_with_ai(payload: dict) -> str:
         print("DeepSeek reflection failed; falling back", file=sys.stderr)
         traceback.print_exc()
         return generate_reflection_with_ai({**payload, "force_local": True})
+
+
+def normalize_meta_tags(value) -> list[str]:
+    if isinstance(value, list):
+        raw = value
+    else:
+        try:
+            raw = json.loads(value or "[]")
+        except (TypeError, json.JSONDecodeError):
+            raw = []
+    return [tag for tag in raw if tag in META_TAGS]
+
+
+def question_payload(row: sqlite3.Row) -> dict:
+    item = dict(row)
+    item["meta_tags"] = normalize_meta_tags(item.get("meta_tags"))
+    return item
+
+
+def get_meta_tag_stats(conn: sqlite3.Connection, doc_id: str | None = None) -> list[dict]:
+    params = []
+    where = "WHERE q.status IN ('做错', '半会', '需复习')"
+    if doc_id:
+        where += " AND q.document_id = ?"
+        params.append(doc_id)
+    rows = conn.execute(f"SELECT q.meta_tags FROM questions q {where}", params).fetchall()
+    counts = {tag: 0 for tag in META_TAGS}
+    for row in rows:
+        for tag in normalize_meta_tags(row["meta_tags"]):
+            counts[tag] += 1
+    max_count = max(counts.values(), default=0) or 1
+    return [{"tag": tag, "count": count, "ratio": round(count / max_count, 3)} for tag, count in counts.items()]
+
+
+def weak_chapter_dependencies(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    rows = conn.execute(
+        """
+        SELECT d.subject, COALESCE(NULLIF(d.title, ''), d.filename) document_title, q.document_id,
+               q.chapter, q.category,
+               SUM(CASE WHEN q.status = '做对' THEN 1 ELSE 0 END) correct,
+               SUM(CASE WHEN q.status IN ('做对', '做错', '半会', '需复习') THEN 1 ELSE 0 END) done
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        GROUP BY d.subject, document_title, q.document_id, q.chapter, q.category
+        HAVING done >= 2 AND (correct * 1.0 / done) < 0.5
+        """
+    ).fetchall()
+    mapping: dict[str, list[str]] = {}
+    for row in rows:
+        deps = []
+        for key in (row["category"], row["chapter"]):
+            deps.extend(KNOWLEDGE_DEPENDENCIES.get(key, []))
+        if deps:
+            group_key = f"{row['subject'] or DEFAULT_SUBJECT} / {row['document_title'] or '做题本'}"
+            mapping.setdefault(group_key, [])
+            for dep in deps:
+                if dep not in mapping[group_key]:
+                    mapping[group_key].append(dep)
+    return mapping
+
+
+def find_foundation_questions(conn: sqlite3.Connection, subject: str, dependency_categories: list[str], exclude_ids: set[str]) -> list[dict]:
+    if not dependency_categories:
+        return []
+    placeholders = ",".join("?" for _ in dependency_categories)
+    params = [subject, *dependency_categories]
+    rows = conn.execute(
+        f"""
+        SELECT q.*, d.filename, d.title document_title, d.subject
+        FROM questions q
+        JOIN documents d ON d.id = q.document_id
+        WHERE d.subject = ?
+          AND q.category IN ({placeholders})
+          AND q.id NOT IN ({",".join("?" for _ in exclude_ids) if exclude_ids else "''"})
+        ORDER BY
+          CASE q.status WHEN '未做' THEN 0 WHEN '做对' THEN 1 ELSE 2 END,
+          q.created_at ASC,
+          q.page_number ASC
+        LIMIT 3
+        """,
+        params + list(exclude_ids),
+    ).fetchall()
+    return [row_to_dict(row) | {"daily_kind": "foundation"} for row in rows]
 
 
 def render_page_image(page: fitz.Page, image_path: Path) -> None:
@@ -810,9 +1053,15 @@ class DemoHandler(BaseHTTPRequestHandler):
             if parsed.path.startswith("/api/questions/") and parsed.path.endswith("/analyze"):
                 q_id = parsed.path.split("/")[-2]
                 return self.handle_analyze(q_id)
+            if parsed.path.startswith("/api/questions/") and parsed.path.endswith("/hint"):
+                q_id = parsed.path.split("/")[-2]
+                return self.handle_hint(q_id)
             if parsed.path.startswith("/api/questions/") and parsed.path.endswith("/variations"):
                 q_id = parsed.path.split("/")[-2]
                 return self.handle_variations(q_id)
+            if parsed.path.startswith("/api/questions/") and parsed.path.endswith("/crop"):
+                q_id = parsed.path.split("/")[-2]
+                return self.handle_crop_question(q_id)
             if parsed.path == "/api/reflection":
                 return self.handle_reflection()
             return text_response(self, "Not found", HTTPStatus.NOT_FOUND)
@@ -1024,27 +1273,35 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def handle_update_question(self, q_id: str) -> None:
         payload = self.read_json()
-        allowed = {"status", "mistake_reason", "user_note", "category", "subcategory", "chapter", "difficulty"}
+        allowed = {"status", "mistake_reason", "meta_tags", "user_note", "category", "subcategory", "chapter", "difficulty"}
         updates = {k: v for k, v in payload.items() if k in allowed}
         if not updates:
             return json_response(self, {"error": "没有可更新字段。"}, 400)
-        if updates.get("status") in {"做错", "半会", "需复习", "做对"}:
-            updates["last_reviewed_at"] = datetime.now().isoformat(timespec="seconds")
-            updates["review_count"] = "review_count + 1"
-        assignments = []
-        params = []
-        for key, value in updates.items():
-            if key == "review_count":
-                assignments.append("review_count = review_count + 1")
-            else:
-                assignments.append(f"{key} = ?")
-                params.append(value)
-        params.append(q_id)
         with connect() as conn:
+            current = conn.execute("SELECT * FROM questions WHERE id = ?", (q_id,)).fetchone()
+            if not current:
+                return json_response(self, {"error": "题目不存在。"}, 404)
+            if "meta_tags" in updates:
+                updates["meta_tags"] = json.dumps(normalize_meta_tags(updates["meta_tags"]), ensure_ascii=False)
+            if updates.get("status") in WRONGISH_STATUSES:
+                existing_tags = normalize_meta_tags(updates.get("meta_tags", current["meta_tags"]))
+                if not existing_tags:
+                    return json_response(self, {"error": "标记错题前，请至少选择一个元认知错因标签。"}, 400)
+            if updates.get("status") in {*WRONGISH_STATUSES, "做对"}:
+                updates["last_reviewed_at"] = datetime.now().isoformat(timespec="seconds")
+                updates["review_count"] = "review_count + 1"
+                updates.update(schedule_for_status(current, updates["status"]))
+            assignments = []
+            params = []
+            for key, value in updates.items():
+                if key == "review_count":
+                    assignments.append("review_count = review_count + 1")
+                else:
+                    assignments.append(f"{key} = ?")
+                    params.append(value)
+            params.append(q_id)
             conn.execute(f"UPDATE questions SET {', '.join(assignments)} WHERE id = ?", params)
             row = conn.execute("SELECT q.*, '' filename FROM questions q WHERE id = ?", (q_id,)).fetchone()
-        if not row:
-            return json_response(self, {"error": "题目不存在。"}, 404)
         return json_response(self, row_to_dict(row))
 
     def handle_analyze(self, q_id: str) -> None:
@@ -1060,9 +1317,29 @@ class DemoHandler(BaseHTTPRequestHandler):
             ).fetchone()
             if not row:
                 return json_response(self, {"error": "题目不存在。"}, 404)
-            analysis = analyze_with_ai(dict(row))
+            analysis = analyze_with_ai(question_payload(row))
             conn.execute("UPDATE questions SET ai_analysis = ? WHERE id = ?", (analysis, q_id))
         return json_response(self, {"ai_analysis": analysis})
+
+    def handle_hint(self, q_id: str) -> None:
+        payload = self.read_json()
+        level = parse_positive_int(str(payload.get("level", "1")), 1) or 1
+        level = max(1, min(3, level))
+        with connect() as conn:
+            row = conn.execute(
+                """
+                SELECT q.*, d.subject
+                FROM questions q
+                JOIN documents d ON d.id = q.document_id
+                WHERE q.id = ?
+                """,
+                (q_id,),
+            ).fetchone()
+            if not row:
+                return json_response(self, {"error": "题目不存在。"}, 404)
+            hint = generate_hint_with_ai(question_payload(row), level)
+            conn.execute("UPDATE questions SET ai_hint = ? WHERE id = ?", (hint, q_id))
+        return json_response(self, {"level": level, "hint": hint})
 
     def handle_variations(self, q_id: str) -> None:
         with connect() as conn:
@@ -1077,9 +1354,37 @@ class DemoHandler(BaseHTTPRequestHandler):
             ).fetchone()
             if not row:
                 return json_response(self, {"error": "题目不存在。"}, 404)
-            variations = generate_variations_with_ai(dict(row))
+            variations = generate_variations_with_ai(question_payload(row))
             conn.execute("UPDATE questions SET ai_variations = ? WHERE id = ?", (variations, q_id))
         return json_response(self, {"ai_variations": variations})
+
+    def handle_crop_question(self, q_id: str) -> None:
+        payload = self.read_json()
+        crop = payload.get("crop") or {}
+        with connect() as conn:
+            row = conn.execute("SELECT image_path FROM questions WHERE id = ?", (q_id,)).fetchone()
+            if not row:
+                return json_response(self, {"error": "题目不存在。"}, 404)
+            image_path = Path(row["image_path"])
+            if not image_path.exists():
+                return json_response(self, {"error": "题图文件不存在。"}, 404)
+            try:
+                from PIL import Image
+
+                with Image.open(image_path) as image:
+                    width, height = image.size
+                    left = max(0, min(width - 1, int(float(crop.get("x", 0)) * width)))
+                    top = max(0, min(height - 1, int(float(crop.get("y", 0)) * height)))
+                    right = max(left + 1, min(width, int(float(crop.get("w", 1)) * width) + left))
+                    bottom = max(top + 1, min(height, int(float(crop.get("h", 1)) * height) + top))
+                    cropped = image.crop((left, top, right, bottom))
+                    cropped.save(image_path)
+            except ImportError:
+                return json_response(self, {"error": "裁剪功能需要安装 Pillow：pip install -r requirements.txt"}, 500)
+            except Exception as exc:
+                return json_response(self, {"error": f"裁剪失败：{exc}"}, 400)
+            updated = conn.execute("SELECT q.*, '' filename FROM questions q WHERE id = ?", (q_id,)).fetchone()
+        return json_response(self, row_to_dict(updated))
 
     def handle_chapter_stats(self, doc_id: str) -> None:
         with connect() as conn:
@@ -1102,6 +1407,7 @@ class DemoHandler(BaseHTTPRequestHandler):
                 """,
                 (doc_id,),
             ).fetchall()
+            meta_stats = get_meta_tag_stats(conn, doc_id)
         stats = []
         for row in rows:
             done = (row["correct"] or 0) + (row["wrong"] or 0) + (row["review"] or 0)
@@ -1109,7 +1415,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             item = dict(row)
             item["correct_rate"] = correct_rate
             stats.append(item)
-        return json_response(self, {"document": document_to_dict(doc), "chapters": stats})
+        return json_response(self, {"document": document_to_dict(doc), "chapters": stats, "meta_tags": meta_stats})
 
     def handle_reflection_preview(self, query: dict) -> None:
         period = query.get("period", ["week"])[0]
@@ -1130,6 +1436,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         return json_response(self, {"reflection": reflection, "summary": reflection_payload})
 
     def handle_daily(self) -> None:
+        today = date.today().isoformat()
         with connect() as conn:
             rows = conn.execute(
                 """
@@ -1137,6 +1444,12 @@ class DemoHandler(BaseHTTPRequestHandler):
                 FROM questions q
                 JOIN documents d ON d.id = q.document_id
                 WHERE q.status IN ('做错', '需复习', '半会')
+                   OR (
+                       q.ever_wrong = 1
+                       AND q.mastered_at IS NULL
+                       AND q.next_review_at IS NOT NULL
+                       AND date(q.next_review_at) <= date(?)
+                   )
                 ORDER BY
                     d.subject ASC,
                     COALESCE(NULLIF(d.title, ''), d.filename) ASC,
@@ -1144,20 +1457,39 @@ class DemoHandler(BaseHTTPRequestHandler):
                         WHEN '做错' THEN 0
                         WHEN '需复习' THEN 1
                         WHEN '半会' THEN 2
+                        WHEN '做对' THEN 3
                         ELSE 4
                     END,
-                    COALESCE(q.last_reviewed_at, q.created_at) ASC
+                    q.review_stage ASC,
+                    COALESCE(q.next_review_at, q.last_reviewed_at, q.created_at) ASC
                 """
+                ,
+                (today,),
             ).fetchall()
+            dependency_map = weak_chapter_dependencies(conn)
         groups_map: dict[str, dict] = {}
+        used_ids: set[str] = set()
         for row in rows:
             item = row_to_dict(row)
+            item["daily_kind"] = "review"
+            used_ids.add(item["id"])
             book_name = item.get("document_title") or item.get("filename") or "做题本"
             group_key = f"{item.get('subject') or DEFAULT_SUBJECT} / {book_name}"
             if group_key not in groups_map:
                 groups_map[group_key] = {"title": group_key, "questions": []}
-            if len(groups_map[group_key]["questions"]) < 5:
+            if len(groups_map[group_key]["questions"]) < 4:
                 groups_map[group_key]["questions"].append(item)
+        with connect() as conn:
+            for group_key, dependencies in dependency_map.items():
+                if group_key not in groups_map:
+                    continue
+                subject = group_key.split(" / ", 1)[0]
+                if len(groups_map[group_key]["questions"]) >= 5:
+                    continue
+                foundations = find_foundation_questions(conn, subject, dependencies, used_ids)
+                if foundations:
+                    groups_map[group_key]["questions"].append(foundations[0])
+                    used_ids.add(foundations[0]["id"])
         groups = [group for group in groups_map.values() if group["questions"]]
         return json_response(
             self,
@@ -1165,7 +1497,7 @@ class DemoHandler(BaseHTTPRequestHandler):
                 "date": date.today().isoformat(),
                 "groups": groups,
                 "plan": [question for group in groups for question in group["questions"]],
-                "message": "每日练习只从错题、需复习和半会题中生成；按科目和做题本分组，每组最多 5 道。",
+                "message": "每日练习由当前错题、到期复习题和低正确率章节的前置基础题组成；每组最多 5 道，其中约 20% 用于补基础。",
             },
         )
 

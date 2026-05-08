@@ -22,11 +22,39 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const META_TAGS = ["计算失误", "公式遗忘", "逻辑死角", "题意理解偏差"];
+
+function typesetMath(root = document.body) {
+  if (window.MathJax?.typesetPromise) {
+    window.MathJax.typesetPromise([root]).catch(() => {});
+  }
+}
 
 function statusClass(status) {
   if (status === "做错") return "wrong";
   if (status === "需复习" || status === "半会") return "review";
   return "";
+}
+
+function reviewTag(q) {
+  if (!q.ever_wrong) return "";
+  if (q.mastered_at) return `<span class="tag memory mastered">已掌握</span>`;
+  if (q.next_review_at) return `<span class="tag memory">${q.retention_stage || q.review_stage || 0}天 · ${q.next_review_at}</span>`;
+  return `<span class="tag memory">曾错题</span>`;
+}
+
+function selectedMetaTags() {
+  return $$(".meta-check input:checked").map((input) => input.value);
+}
+
+function metaTagControls(selected = []) {
+  return META_TAGS.map(
+    (tag) => `
+      <label class="meta-check">
+        <input type="checkbox" value="${tag}" ${selected.includes(tag) ? "checked" : ""} />
+        <span>${tag}</span>
+      </label>`
+  ).join("");
 }
 
 function snippet(text) {
@@ -211,6 +239,7 @@ function renderQuestionGrid(target, questions) {
             </div>
             <strong>${q.category}</strong>
             <span class="tag">${q.subject || "未分类"} · ${q.chapter || "未识别章节"}</span>
+            ${reviewTag(q)}
             <p class="snippet">${snippet(q.ocr_text)}</p>
             <div class="actions">
               <button data-status="做对" data-id="${q.id}">做对</button>
@@ -224,8 +253,13 @@ function renderQuestionGrid(target, questions) {
 }
 
 async function updateQuestion(id, payload) {
-  await api(`/api/questions/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
-  await refresh();
+  try {
+    await api(`/api/questions/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+    await refresh();
+  } catch (error) {
+    alert(error.message);
+    throw error;
+  }
 }
 
 async function deleteQuestion(id) {
@@ -258,7 +292,14 @@ async function openDetail(id) {
   $("#detailContent").innerHTML = `
     <div class="detail">
       <div class="detail-image">
-        <img src="${q.image_url}" alt="题目页面" />
+        <div class="crop-toolbar">
+          <button class="ghost" id="enableCrop">裁剪题目边界</button>
+          <button id="saveCrop" disabled>保存裁剪</button>
+        </div>
+        <div class="crop-stage" id="cropStage">
+          <img id="detailImage" src="${q.image_url}?t=${Date.now()}" alt="题目页面" />
+          <div id="cropBox" class="crop-box hidden"></div>
+        </div>
       </div>
       <div class="detail-side">
         <div class="panel-head">
@@ -278,11 +319,14 @@ async function openDetail(id) {
             ${["未做", "做对", "做错", "半会", "需复习"].map((s) => `<option ${s === q.status ? "selected" : ""}>${s}</option>`).join("")}
           </select>
         </label>
+        <div class="memory-panel">
+          <strong>复习记忆</strong>
+          <span>${q.ever_wrong ? (q.mastered_at ? "已完成多轮复习，标记为已掌握。" : `保持阶段：${q.retention_stage || 1} 天，下次复习：${q.next_review_at || "待安排"}`) : "这道题还没有进入错题复习队列。"}</span>
+          <small>created_at: ${q.created_at || "-"} · retention_stage: ${q.retention_stage || 0}</small>
+        </div>
         <label>
-          错误原因
-          <select id="mistakeReason">
-            ${["", "概念不清", "计算错误", "方法不会", "公式记错", "审题错误", "时间不够"].map((s) => `<option ${s === q.mistake_reason ? "selected" : ""}>${s || "未选择"}</option>`).join("")}
-          </select>
+          元认知错因
+          <div class="meta-checks">${metaTagControls(q.meta_tags || [])}</div>
         </label>
         <label>
           我的备注
@@ -290,65 +334,148 @@ async function openDetail(id) {
         </label>
         <div class="detail-actions">
           <button id="saveDetail">保存标注</button>
-          <button id="analyzeQuestion" class="ghost">生成错题分析</button>
+          <button id="hint1" class="ghost">Get Hint L1</button>
+          <button id="hint2" class="ghost">Get Hint L2</button>
+          <button id="hint3" class="ghost">Full Solution</button>
           <button id="generateVariations" class="ghost">举一反三</button>
           <button id="needReview" class="ghost">加入复习</button>
           <button id="deleteDetailQuestion" class="danger">删除题目</button>
         </div>
-        <pre id="analysisBox">${q.ai_analysis || "保存错因后，可以生成一份针对这道题的分析。"}</pre>
+        <article id="analysisBox" class="math-output">${q.ai_hint || q.ai_analysis || "先尝试 Level 1 概念提示；仍卡住再逐级展开到完整解析。"}</article>
         <pre id="variationsBox">${q.ai_variations || "点击“举一反三”，生成同类变式练习。"}</pre>
       </div>
     </div>`;
   dialog.showModal();
+  typesetMath($("#detailContent"));
 
   $("#closeDetail").onclick = () => dialog.close();
   $("#saveDetail").onclick = async () => {
     await updateQuestion(q.id, {
       status: $("#detailStatus").value,
-      mistake_reason: $("#mistakeReason").value,
+      meta_tags: selectedMetaTags(),
+      mistake_reason: selectedMetaTags().join("、"),
       user_note: $("#userNote").value,
       chapter: $("#detailChapter").value,
     });
     dialog.close();
   };
   $("#needReview").onclick = async () => {
-    await updateQuestion(q.id, { status: "需复习", user_note: $("#userNote").value });
+    await updateQuestion(q.id, { status: "需复习", meta_tags: selectedMetaTags(), mistake_reason: selectedMetaTags().join("、"), user_note: $("#userNote").value });
     dialog.close();
   };
   $("#deleteDetailQuestion").onclick = async () => {
     dialog.close();
     await deleteQuestion(q.id);
   };
-  $("#analyzeQuestion").onclick = async () => {
-    $("#analysisBox").textContent = "正在生成分析...";
-    await api(`/api/questions/${q.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        status: $("#detailStatus").value,
-        mistake_reason: $("#mistakeReason").value,
-        user_note: $("#userNote").value,
-        chapter: $("#detailChapter").value,
-      }),
-    });
-    const data = await api(`/api/questions/${q.id}/analyze`, { method: "POST", body: "{}" });
-    $("#analysisBox").textContent = data.ai_analysis;
-    await refresh();
-  };
+  [1, 2, 3].forEach((level) => {
+    $(`#hint${level}`).onclick = async () => {
+      $("#analysisBox").textContent = level === 3 ? "正在生成完整 LaTeX 解析..." : "正在生成提示...";
+      await api(`/api/questions/${q.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: $("#detailStatus").value,
+          meta_tags: selectedMetaTags(),
+          mistake_reason: selectedMetaTags().join("、"),
+          user_note: $("#userNote").value,
+          chapter: $("#detailChapter").value,
+        }),
+      });
+      const data = await api(`/api/questions/${q.id}/hint`, { method: "POST", body: JSON.stringify({ level }) });
+      $("#analysisBox").textContent = data.hint;
+      typesetMath($("#analysisBox"));
+      await refresh();
+    };
+  });
   $("#generateVariations").onclick = async () => {
-    $("#variationsBox").textContent = "正在生成举一反三...";
+    $("#variationsBox").textContent = "正在生成难度梯度变式...";
     await api(`/api/questions/${q.id}`, {
       method: "PATCH",
       body: JSON.stringify({
         status: $("#detailStatus").value,
-        mistake_reason: $("#mistakeReason").value,
+        meta_tags: selectedMetaTags(),
+        mistake_reason: selectedMetaTags().join("、"),
         user_note: $("#userNote").value,
         chapter: $("#detailChapter").value,
       }),
     });
     const data = await api(`/api/questions/${q.id}/variations`, { method: "POST", body: "{}" });
     $("#variationsBox").textContent = data.ai_variations;
+    typesetMath($("#variationsBox"));
     await refresh();
   };
+  setupCropTool(q.id);
+}
+
+function setupCropTool(questionId) {
+  const stage = $("#cropStage");
+  const box = $("#cropBox");
+  const save = $("#saveCrop");
+  let active = false;
+  let start = null;
+  let crop = null;
+
+  $("#enableCrop").onclick = () => {
+    active = !active;
+    box.classList.toggle("hidden", !active);
+    save.disabled = !active;
+  };
+
+  stage.onpointerdown = (event) => {
+    if (!active) return;
+    const rect = stage.getBoundingClientRect();
+    start = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    crop = { x: start.x, y: start.y, w: 1, h: 1 };
+    drawCropBox(crop);
+  };
+
+  stage.onpointermove = (event) => {
+    if (!active || !start) return;
+    const rect = stage.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+    const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+    crop = {
+      x: Math.min(start.x, x),
+      y: Math.min(start.y, y),
+      w: Math.abs(x - start.x),
+      h: Math.abs(y - start.y),
+    };
+    drawCropBox(crop);
+  };
+
+  stage.onpointerup = () => {
+    start = null;
+  };
+
+  save.onclick = async () => {
+    if (!crop || crop.w < 20 || crop.h < 20) {
+      alert("请拖出一个足够大的裁剪区域。");
+      return;
+    }
+    const rect = stage.getBoundingClientRect();
+    const normalized = {
+      x: crop.x / rect.width,
+      y: crop.y / rect.height,
+      w: crop.w / rect.width,
+      h: crop.h / rect.height,
+    };
+    const updated = await api(`/api/questions/${questionId}/crop`, {
+      method: "POST",
+      body: JSON.stringify({ crop: normalized }),
+    });
+    $("#detailImage").src = `${updated.image_url}?t=${Date.now()}`;
+    box.classList.add("hidden");
+    save.disabled = true;
+    active = false;
+    await refresh();
+  };
+}
+
+function drawCropBox(crop) {
+  const box = $("#cropBox");
+  box.style.left = `${crop.x}px`;
+  box.style.top = `${crop.y}px`;
+  box.style.width = `${crop.w}px`;
+  box.style.height = `${crop.h}px`;
 }
 
 async function loadChapterStats(documentId) {
@@ -360,6 +487,10 @@ async function loadChapterStats(documentId) {
   $("#statsDocumentSelect").value = id;
   const data = await api(`/api/documents/${id}/chapter-stats`);
   $("#chapterStatsGrid").innerHTML =
+    `<article class="chapter-card radar-card">
+      <h3>错因雷达图</h3>
+      ${renderRadar(data.meta_tags || [])}
+    </article>` +
     data.chapters
       .map((chapter) => {
         const deg = Math.round((chapter.correct_rate / 100) * 360);
@@ -375,6 +506,34 @@ async function loadChapterStats(documentId) {
         </article>`;
       })
       .join("") || "<p>这套做题本还没有章节数据。</p>";
+  typesetMath($("#chapterStatsGrid"));
+}
+
+function renderRadar(items) {
+  const size = 210;
+  const center = size / 2;
+  const radius = 78;
+  const points = items.map((item, index) => {
+    const angle = -Math.PI / 2 + (index * 2 * Math.PI) / items.length;
+    const value = item.ratio || 0;
+    return {
+      ...item,
+      x: center + Math.cos(angle) * radius * value,
+      y: center + Math.sin(angle) * radius * value,
+      ax: center + Math.cos(angle) * radius,
+      ay: center + Math.sin(angle) * radius,
+      lx: center + Math.cos(angle) * (radius + 26),
+      ly: center + Math.sin(angle) * (radius + 26),
+    };
+  });
+  const polygon = points.map((p) => `${p.x},${p.y}`).join(" ");
+  return `
+    <svg class="radar" viewBox="0 0 ${size} ${size}" role="img" aria-label="错因雷达图">
+      <polygon class="radar-grid" points="${points.map((p) => `${p.ax},${p.ay}`).join(" ")}"></polygon>
+      ${points.map((p) => `<line class="radar-axis" x1="${center}" y1="${center}" x2="${p.ax}" y2="${p.ay}"></line>`).join("")}
+      <polygon class="radar-area" points="${polygon}"></polygon>
+      ${points.map((p) => `<text x="${p.lx}" y="${p.ly}" text-anchor="middle">${p.tag} ${p.count}</text>`).join("")}
+    </svg>`;
 }
 
 async function loadReflectionPreview() {
@@ -452,6 +611,8 @@ async function loadDaily() {
                     </div>
                     <strong>${q.category}</strong>
                     <span class="tag">${q.chapter || "未识别章节"}</span>
+                    ${q.daily_kind === "foundation" ? '<span class="tag foundation">前置基础</span>' : ""}
+                    ${reviewTag(q)}
                     <div class="actions">
                       <button data-status="做对" data-id="${q.id}">做对</button>
                       <button data-status="做错" data-id="${q.id}">做错</button>
