@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Sakura",
+  "version": "1.0.0",
+  "description": "放大 Gemini 可视化（全屏）+ 划词翻译",
+  "host_permissions": [
+    "https://dict.youdao.com/*",
+    "https://api.dictionaryapi.dev/*",
+    "https://translate.googleapis.com/*",
+    "https://api.mymemory.translated.net/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://gemini.google.com/*",
+        "https://aistudio.google.com/*"
+      ],
+      "js": ["content.js", "translation.js"],
+      "css": ["content.css", "translation.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

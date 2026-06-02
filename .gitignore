@@ -1,0 +1,25 @@
+# 开发文件
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 打包文件
+*.crx
+*.pem
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 临时文件
+temp/
+tmp/

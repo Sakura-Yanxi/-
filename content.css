@@ -1,0 +1,30 @@
+/* 放大按钮：固定在 iframe 父容器右上角 */
+.gemini-viz-enhancer-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 99999;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  opacity: 0.85;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.gemini-viz-enhancer-btn:hover {
+  opacity: 1;
+  transform: scale(1.05);
+}
+
+/* 全屏时给 iframe 一个深色背景，避免周围出现白边 */
+.gemini-viz-enhancer-target:fullscreen {
+  background: #0e0e10 !important;
+}
+
