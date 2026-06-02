@@ -107,14 +107,20 @@ function splitPos(text) {
   return { pos: '', meaning: text };
 }
 
-// 选中单词时触发
+// 判断是否为「需要翻译的英文」：含字母、不含中文、长度合理
+function isEnglishSelection(text) {
+  if (!text || text.length > 200) return false;
+  if (/[一-鿿]/.test(text)) return false; // 含中文则不翻译
+  return /[a-zA-Z]/.test(text);
+}
+
+// 选中英文时触发
 document.addEventListener('mouseup', (e) => {
   if (popup && popup.contains(e.target)) return;
 
   setTimeout(() => {
     const text = window.getSelection().toString().trim();
-    // 含英文字母、长度合理（最多 200 字符）即触发，单词查词典、词组/句子翻译
-    if (text && text.length <= 200 && /[a-zA-Z]/.test(text)) {
+    if (isEnglishSelection(text)) {
       const r = window.getSelection().getRangeAt(0).getBoundingClientRect();
       showPopup(text, r.left + r.width / 2, r.bottom + window.scrollY);
     } else if (popup) {
