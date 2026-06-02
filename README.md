@@ -14,7 +14,6 @@
 
 - `archive/old-misc-files`
   - 旧脚本和旧笔记归档。
-  - 用于保存历史内容，不作为当前 demo 主线。
 
 ## 推荐使用方式
 
@@ -24,8 +23,4 @@
 git checkout demo/sakura-question-bank
 ```
 
-后续如果还有新的 demo，建议按这个命名继续建立独立分支：
 
-```text
-demo/your-next-demo-name
-```
