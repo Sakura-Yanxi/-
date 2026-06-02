@@ -28,9 +28,9 @@ function createPopup() {
   return popup;
 }
 
-function showPopup(word, x, y) {
+function showPopup(text, x, y) {
   const el = createPopup();
-  el.querySelector('.translation-word').textContent = word;
+  el.querySelector('.translation-word').textContent = text;
   el.querySelector('.translation-content').innerHTML =
     '<div class="translation-loading">翻译中...</div>';
 
@@ -46,7 +46,7 @@ function showPopup(word, x, y) {
   });
 
   // 后台查询（绕过页面 CSP）
-  chrome.runtime.sendMessage({ action: 'translate', word }, (data) => {
+  chrome.runtime.sendMessage({ action: 'translate', word: text }, (data) => {
     const content = el.querySelector('.translation-content');
     if (chrome.runtime.lastError) {
       content.innerHTML = '<div class="translation-error">连接后台失败，请重试</div>';
