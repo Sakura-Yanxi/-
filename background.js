@@ -79,23 +79,31 @@ async function translatePhrase(text) {
   const q = encodeURIComponent(text);
 
   const sources = [
-    // MyMemory：免费、国内可达、专做翻译
-    async () => (await fetchJSON(
-      `https://api.mymemory.translated.net/get?q=${q}&langpair=en|zh-CN`
-    ))?.responseData?.translatedText,
-
-    // 有道词典 fanyi 字段
-    async () => (await fetchJSON(
-      `https://dict.youdao.com/jsonapi?q=${q}`
-    ))?.fanyi?.tran,
-
-    // Google 端点兜底（国内多半连不上，靠超时跳过）
+    // Google 端点（质量最好，国内连不上则靠超时跳过）
     async () => {
       const d = await fetchJSON(
         `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=${q}`
       );
-      return (d?.[0] || []).map((seg) => seg[0]).join('') || null;
+      return (d?.[0] || []).map((seg) => seg[0]).join('');
     },
+
+    // MyMemory：免费、国内可达；限流时会把英文警告塞进译文，需过滤
+    async () => {
+      const d = await fetchJSON(
+        `https://api.mymemory.translated.net/get?q=${q}&langpair=en|zh-CN`
+      );
+      if (d?.responseStatus !== 200) return null;
+      const tran = d?.responseData?.translatedText || '';
+      // 限流警告 / 原文回显（不含中文）一律视为失败
+      if (/MYMEMORY WARNING|QUERY LENGTH LIMIT|INVALID/i.test(tran)) return null;
+      if (!/[一-龥]/.test(tran)) return null;
+      return tran;
+    },
+
+    // 有道词典 fanyi 字段兜底
+    async () => (await fetchJSON(
+      `https://dict.youdao.com/jsonapi?q=${q}`
+    ))?.fanyi?.tran,
   ];
 
   for (const get of sources) {

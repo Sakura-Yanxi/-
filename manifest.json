@@ -27,9 +27,10 @@
         "https://gemini.google.com/*",
         "https://aistudio.google.com/*",
         "https://chat.deepseek.com/*",
+        "https://*.qianwen.com/*",
         "https://tongyi.aliyun.com/*",
         "https://*.tongyi.ai/*",
-        "https://www.tongyi.com/*",
+        "https://*.tongyi.com/*",
         "https://*.doubao.com/*"
       ],
       "js": ["translation.js"],
