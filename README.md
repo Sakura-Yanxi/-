@@ -2,8 +2,8 @@
 
 一个用于 [Gemini](https://gemini.google.com/) / AI Studio 页面的 Chrome 扩展（Manifest V3），提供两个功能：
 
-1. **可视化放大** — 检测 Gemini 生成的可视化 iframe，在右上角加「🔍 放大」按钮，点击后让 iframe 进入浏览器原生全屏（保留完整交互，ESC 退出）。
-2. **划词翻译** — 选中英文文本弹窗翻译：单个单词显示音标 + 词性 + 释义；词组 / 句子显示整段中文。
+1. **可视化放大** — 检测 Gemini 生成的可视化 iframe，在右上角加「🔍 放大」按钮，点击后让 iframe 进入浏览器原生全屏（保留完整交互，ESC 退出）。*仅 Gemini / AI Studio。*
+2. **划词翻译** — 选中英文文本弹窗翻译：单个单词显示音标 + 词性 + 释义；词组 / 句子显示整段中文。*支持 Gemini、AI Studio、DeepSeek、通义千问、豆包。*
 
 纯前端实现，无构建步骤，无第三方依赖。
 
@@ -47,7 +47,8 @@ Gemini 页面有严格 CSP，content script 里直接 `fetch` 外部接口会被
 ## 说明
 
 - 翻译使用有道、Free Dictionary、MyMemory、Google 等公开接口，仅供个人学习使用；这些接口非官方授权，可能随时变更或失效。
-- 扩展仅在 Gemini / AI Studio 页面运行，不收集、不上传任何用户数据，所有请求只用于翻译查询。
+- 可视化放大仅在 Gemini / AI Studio 生效（依赖其特有的沙箱 iframe）；划词翻译额外支持 DeepSeek、通义千问、豆包。
+- 扩展不收集、不上传任何用户数据，所有网络请求只用于翻译查询。
 
 ## License
 

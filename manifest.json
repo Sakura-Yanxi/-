@@ -18,8 +18,22 @@
         "https://gemini.google.com/*",
         "https://aistudio.google.com/*"
       ],
-      "js": ["content.js", "translation.js"],
-      "css": ["content.css", "translation.css"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://gemini.google.com/*",
+        "https://aistudio.google.com/*",
+        "https://chat.deepseek.com/*",
+        "https://tongyi.aliyun.com/*",
+        "https://*.tongyi.ai/*",
+        "https://www.tongyi.com/*",
+        "https://*.doubao.com/*"
+      ],
+      "js": ["translation.js"],
+      "css": ["translation.css"],
       "run_at": "document_idle"
     }
   ],
