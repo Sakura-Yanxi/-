@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>iPad 截图转 PDF Demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Local PDF Maker</p>
+          <h1>iPad 截图转 PDF</h1>
+          <p class="subtitle">批量拖入截图，调整顺序和压缩质量后，一键生成多页 PDF。所有处理都在浏览器本地完成。</p>
+        </div>
+        <button id="clearBtn" class="ghost" type="button" disabled>清空</button>
+      </section>
+
+      <section id="dropZone" class="drop-zone">
+        <input id="fileInput" type="file" accept="image/*" multiple />
+        <div class="upload-icon">+</div>
+        <h2>拖拽截图到这里</h2>
+        <p>或点击选择多张 PNG / JPG / HEIC 转换后的图片</p>
+      </section>
+
+      <section class="controls" aria-label="PDF 设置">
+        <label>
+          页面尺寸
+          <select id="pageSize">
+            <option value="image">跟随截图尺寸</option>
+            <option value="a4">A4 竖版</option>
+            <option value="letter">Letter 竖版</option>
+          </select>
+        </label>
+        <label>
+          图片质量
+          <input id="quality" type="range" min="0.45" max="1" step="0.05" value="0.86" />
+          <span id="qualityValue">86%</span>
+        </label>
+        <label>
+          最大边长
+          <select id="maxEdge">
+            <option value="2200">2200 px</option>
+            <option value="1800">1800 px</option>
+            <option value="1400">1400 px</option>
+            <option value="0">保留原尺寸</option>
+          </select>
+        </label>
+        <label>
+          文件名
+          <input id="fileName" type="text" value="ipad-screenshots.pdf" />
+        </label>
+        <button id="exportBtn" class="primary" type="button" disabled>生成 PDF</button>
+      </section>
+
+      <section class="list-head">
+        <p id="summary">还没有选择截图</p>
+        <p class="hint">拖动卡片可排序，也可以用按钮微调。</p>
+      </section>
+
+      <section id="imageList" class="image-list" aria-live="polite"></section>
+    </main>
+
+    <template id="imageCardTemplate">
+      <article class="image-card" draggable="true">
+        <img alt="" />
+        <div class="image-meta">
+          <strong></strong>
+          <span></span>
+        </div>
+        <div class="actions">
+          <button class="icon-btn move-up" type="button" title="上移">↑</button>
+          <button class="icon-btn move-down" type="button" title="下移">↓</button>
+          <button class="icon-btn remove" type="button" title="移除">×</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
